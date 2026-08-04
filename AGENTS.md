@@ -197,8 +197,9 @@ Three layers:
 | `test/smoke.test.ts`          | Pure unit tests of the state machine, formatters, OSC writer. | `npx tsx test/smoke.test.ts`        |
 | `test/integration.test.ts`    | Spawns `pi -e ./src/index.ts -p` to confirm the extension loads and exits cleanly. Also covers OSC writer non-TTY and accumulation edge cases. | `npx tsx test/integration.test.ts`  |
 | TypeScript                   | Strict-mode compile check.                      | `npx tsc --noEmit`                  |
+| `.github/workflows/ci.yml`    | Runs `check` + `test` on every push to `main` and on every PR. The integration step also installs `pi` globally because the integration test spawns it. | GitHub Actions UI                  |
 
-The `npm test` script runs both `smoke.test.ts` and `integration.test.ts` in order. The `npm run check` script runs only `tsc`.
+The `npm test` script runs both `smoke.test.ts` and `integration.test.ts` in order. The `npm run check` script runs only `tsc`. CI runs both, on Node 22 (the version `.nvmrc` pins and the only one `pi` itself supports today).
 
 **Test style.** Both test files roll their own minimal runner (`test()`, `eq()`, `pass/fail` counters). Don't pull in a test framework just for this — the in-tree style is intentional and zero-dep. The smoke test uses `npx tsx` (no compile step); tsx is in `devDependencies`.
 
@@ -213,7 +214,11 @@ The `npm test` script runs both `smoke.test.ts` and `integration.test.ts` in ord
 
 This project is a **pi extension**, not a published npm package. There is no `tsc` build step — pi loads `.ts` files via jiti at runtime. The only compile-time check is `npx tsc --noEmit`, which the `check` npm script wraps.
 
+The package *is* published to npm (so users can `pi install npm:pi-status-tab`), but the published tarball contains the same `.ts` source files that live in this repo — there is no compiled JS. The `files` field in `package.json` whitelists `src/`, the two READMEs, and `CHANGELOG.md`.
+
 If you ever want to ship pre-compiled JS (e.g. for a non-pi Node host), add a `build` script that emits to `dist/` and update `package.json#exports` and `pi.extensions`. Don't introduce this without a concrete consumer — the source-of-truth `.ts` files are part of the user-visible contract.
+
+**Node version.** `engines.node` in `package.json` pins the minimum Node to the version that the latest `@earendil-works/pi-coding-agent` (which the integration test spawns) requires. Today that's `>=22.19.0`. Bump `engines.node` and `.nvmrc` together whenever you bump the `pi` dep — otherwise `npm ci` in CI will warn (or fail under `--engine-strict`).
 
 **tsconfig notes:**
 
@@ -259,11 +264,19 @@ Things to know if you're touching the wiring:
 - `agent_start` / `agent_end` / `agent_settled` come from the agent runner, not from any individual turn. `agent_settled` is the right hook if you only want to react to "all retries / compactions / follow-ups done", but the current code does not use it because the subagent counters already cover that ground.
 - The `subagent:async-started` / `subagent:async-complete` event names are a contract with pi-subagents. They are not part of pi itself. If pi-subagents renames them, this extension must follow.
 
-## 10. Release checklist
+## 10. Release process
 
-1. `npm run check` — TypeScript clean.
-2. `npm test` — all unit + integration tests pass.
-3. Smoke test in a real TUI: `pi -e ./src/index.ts` and verify the title changes through a full run.
-4. Bump `version` in `package.json`.
-5. Add a `CHANGELOG.md` entry under a new version heading.
-6. Commit. Tag if it's a real release.
+Releases are automated. Bump the version, push the tag, publish the GitHub release — the rest runs itself.
+
+```bash
+npm run check && npm test
+npm version patch   # or minor / major
+# update CHANGELOG.md
+git push origin main --follow-tags
+```
+
+Then on GitHub: **Releases → Draft a new release → pick the new tag → Publish**. The `release.yml` workflow runs `check` + `test` and publishes via npm Trusted Publishing (OIDC) — no long-lived `NPM_TOKEN` secret.
+
+Local fallback (GitHub down, etc.): `npm login && npm publish --provenance --access public`. The `prepublishOnly` script ensures `check` + `test` run before either path.
+
+The Trusted Publisher is bound to this repo + `release.yml`; one-time setup details live in the workflow file's comments and the package's npmjs.com settings page.

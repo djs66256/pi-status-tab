@@ -1,0 +1,70 @@
+# Release
+
+name: Release
+
+on:
+  release:
+    types: [published]
+
+# Serialize releases so a second release event can never race the first
+# publish. Cancel previous runs of the same release ref so a re-publish
+# (e.g. a GitHub release re-publish) doesn't queue up.
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    # `id-token: write` is required for npm Trusted Publishing (OIDC). The
+    # workflow gets a short-lived OIDC token from GitHub Actions; npm
+    # validates it against the Trusted Publisher config on npmjs.com. No
+    # long-lived secret is stored anywhere — the previous NPM_TOKEN
+    # approach is no longer needed and the secret can be deleted.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org/
+
+      - name: Upgrade npm (for OIDC support)
+        # Trusted Publishing (OIDC) requires npm >= 11.4. Node 22 ships
+        # with npm 10.x, so we upgrade to the latest 11.x line. Pin to
+        # 11.x so a future npm 12 major doesn't break the workflow
+        # without an explicit bump.
+        run: npm install -g npm@^11
+
+      - name: Install pi (for integration tests)
+        run: npm install -g @earendil-works/pi-coding-agent@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+      - name: Publish
+        # Trusted Publishing: with no NODE_AUTH_TOKEN set, npm requests an
+        # OIDC token from the runner (needs `id-token: write` above) and
+        # presents it to the registry. The registry validates the token
+        # against the Trusted Publisher config you set up on npmjs.com.
+        #
+        # `--provenance` attaches an npm attestation linking the published
+        # tarball back to this workflow run.
+        # `--access public` is the default for unscoped packages but is
+        # stated explicitly so the intent is obvious in the log.
+        # `prepublishOnly` in package.json already ran `check` and `test`
+        # before this step, so we don't need to repeat them here.
+        run: npm publish --provenance --access public

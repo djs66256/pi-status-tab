@@ -1,0 +1,52 @@
+# CI
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight PR runs when a new commit lands on the same PR.
+# Main-branch runs are not cancelled so completed work is preserved.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build & test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The integration test spawns the `pi` CLI. The latest
+        # `@earendil-works/pi-coding-agent` requires Node >= 22.19.0, so we
+        # pin CI to the current LTS line. Bump alongside `engines.node` in
+        # package.json.
+        node: [22]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install pi (for integration tests)
+        # The integration test runs `pi -e ./src/index.ts -p` to verify the
+        # extension loads. `pi` is the CLI of `@earendil-works/pi-coding-agent`
+        # and is not on the runner PATH by default.
+        run: npm install -g @earendil-works/pi-coding-agent@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check
+
+      - name: Test
+        run: npm test

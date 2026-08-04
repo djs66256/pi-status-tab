@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-04
+
+### Added
+
+- GitHub Actions CI workflow (`.github/workflows/ci.yml`): runs `check` + `test` on every push to `main` and on every PR, on Node 22.
+- GitHub Actions release workflow (`.github/workflows/release.yml`): on `release: published`, runs the same checks and then `npm publish --provenance --access public` using **npm Trusted Publishing** (OIDC) — no long-lived `NPM_TOKEN` secret to rotate. Needs `id-token: write` for the OIDC exchange and the package must have a GitHub Actions Trusted Publisher configured on npmjs.com pointing at `release.yml`.
+- `prepublishOnly` npm script (`npm run check && npm test`) as a local safety net for manual `npm publish`.
+- `.nvmrc` pinning Node 22 to keep local dev and CI in sync.
+
+### Changed
+
+- Bump `engines.node` from `>=20` to `>=22.19.0` to match the latest `@earendil-works/pi-coding-agent` (which the integration test spawns).
+
+### Documentation
+
+- `AGENTS.md` §6 lists the CI workflow alongside the existing test layers.
+- `AGENTS.md` §7 documents the Node-version coupling between this package and `pi`.
+- `AGENTS.md` §10 rewritten as a "Release process" walkthrough covering the GitHub workflow setup, the npm Trusted Publisher configuration, the `prepublishOnly` fallback, and a TL;DR checklist.
+
 ## [0.1.2] - 2026-08-04
 
 ### Changed
