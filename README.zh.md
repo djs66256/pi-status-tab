@@ -25,31 +25,26 @@
 
 ## 安装
 
-本扩展是一个标准的 pi 包。支持本地或全局安装。
-
-### 本地安装（本仓库）
+本扩展已发布到 npm，推荐从 npm 安装：
 
 ```bash
-# 在本目录下执行：
+pi install npm:pi-status-tab
+```
+
+也可以从本地克隆安装（用于开发或固定某个 fork 版本）：
+
+```bash
+# 在本目录下执行
 pi install .
+
+# 或任意位置指向仓库路径
+pi install /path/to/pi-status-tab
 ```
 
 开发阶段也可以直接用 `-e` 指向源码文件：
 
 ```bash
 pi -e ./src/index.ts
-```
-
-### 全局安装
-
-```bash
-pi install /Users/bytedance/Documents/github/pi-status-tab
-```
-
-### 从 npm 安装（发布后）
-
-```bash
-pi install npm:pi-status-tab
 ```
 
 安装完成后重启 pi 或执行 `/reload` 即可生效。

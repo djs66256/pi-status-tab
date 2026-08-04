@@ -23,16 +23,20 @@ The same information also shows in the in-TUI status bar at the bottom of pi.
 
 ## Installation
 
-The extension is a standard pi package. From this directory:
+The extension is published to npm as `pi-status-tab`. Install it from there:
 
 ```bash
-pi install .
+pi install npm:pi-status-tab
 ```
 
-Or install it user-wide (replace the path with wherever you keep the repo):
+Or install it from a local clone (for development or pinning a fork):
 
 ```bash
-pi install /Users/bytedance/Documents/github/pi-status-tab
+# From this directory
+pi install .
+
+# Or user-wide from anywhere
+pi install /path/to/pi-status-tab
 ```
 
 For quick iteration during development, point pi at the source file directly:

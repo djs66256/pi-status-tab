@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-04
+
+### Changed
+
+- README / README.zh: lead with `pi install npm:pi-status-tab` now that the
+  package is published; local-clone and `-e ./src/index.ts` are listed as
+  development alternatives.
+- README / README.zh: replace the hard-coded local install path with a
+  generic `/path/to/pi-status-tab` placeholder.
+
 ## [0.1.1] - 2026-08-04
 
 ### Changed
