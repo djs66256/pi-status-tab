@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-04
+
+### Fixed
+
+- Add the `repository` field to `package.json` (and `bugs` + `homepage` while at it). npm's OIDC provenance verification requires the `repository.url` in the published `package.json` to match the GitHub repo URL; without it, the release workflow's `npm publish` step fails with `E422 "repository.url is '', expected to match ... from provenance"`.
+- Withdraw the `v0.1.4` tag and GitHub release (never published to npm) and ship the same changes as `v0.1.5`. Treat `0.1.5` as the first successful release of the GitHub Actions workflow.
+
 ## [0.1.4] - 2026-08-04
 
 > **Note on versioning.** The `v0.1.3` tag was cut and the release workflow

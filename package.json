@@ -32,6 +32,14 @@
 		"status"
 	],
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/djs66256/pi-status-tab.git"
+	},
+	"bugs": {
+		"url": "https://github.com/djs66256/pi-status-tab/issues"
+	},
+	"homepage": "https://github.com/djs66256/pi-status-tab#readme",
 	"engines": {
 		"node": ">=22.19.0"
 	},
