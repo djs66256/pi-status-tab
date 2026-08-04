@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-04
+
+### Changed
+
+- Ignore `.pi/` (project-local pi settings) so per-developer package paths
+  (e.g. `".."`) stay out of version control.
+
 ## [0.1.0] - 2026-08-04
 
 ### Added

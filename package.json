@@ -1,6 +1,6 @@
 {
 	"name": "pi-status-tab",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Display pi's running state in the terminal tab title (iTerm2, Zed, etc.) and status bar, with subagent awareness.",
 	"type": "module",
 	"main": "./src/index.ts",
