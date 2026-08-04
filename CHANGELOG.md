@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.3] - 2026-08-04
+## [0.1.4] - 2026-08-04
+
+> **Note on versioning.** The `v0.1.3` tag was cut and the release workflow
+> ran, but the publish step never completed — the workflow shipped an
+> LLM-dependent integration test that couldn't run in CI. The tag and
+> GitHub release were withdrawn before any `0.1.3` artifact was published
+> to npm. The changes that were intended for `0.1.3` ship here as `0.1.4`,
+> along with the test fix. If you are tracking this repo, treat `0.1.4`
+> as the first release of the GitHub Actions workflow.
 
 ### Added
 
@@ -18,17 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Bump `engines.node` from `>=20` to `>=22.19.0` to match the latest `@earendil-works/pi-coding-agent` (which the integration test spawns).
+- Bump `engines.node` from `>=20` to `>=22.19.0` to match the latest `@earendil-works/pi-coding-agent`.
 
 ### Documentation
 
-- `AGENTS.md` §6 lists the CI workflow alongside the existing test layers.
+- `AGENTS.md` §6 lists the CI workflow alongside the existing test layers and explains why there is no spawn-`pi` integration test.
 - `AGENTS.md` §7 documents the Node-version coupling between this package and `pi`.
 - `AGENTS.md` §10 rewritten as a "Release process" walkthrough covering the GitHub workflow setup, the npm Trusted Publisher configuration, the `prepublishOnly` fallback, and a TL;DR checklist.
 
 ### Fixed
 
-- Remove the spawn-`pi` end-to-end test from `test/integration.test.ts` (renamed the file to `test/osc.test.ts` since it now only covers the OSC writer). The test required an LLM API key to satisfy pi's startup auth check and could not run in CI. The smoke tests still cover the extension's state machine, formatters, and event wiring.
+- Remove the spawn-`pi` end-to-end test that was in `test/integration.test.ts`. It required an LLM API key to satisfy pi's startup auth check and therefore could not run in CI. The file is renamed to `test/osc.test.ts` and now only covers the OSC writer (TTY mode, non-TTY, accumulation, long titles). The smoke tests still cover the extension's state machine, formatters, and event wiring.
 
 ## [0.1.2] - 2026-08-04
 

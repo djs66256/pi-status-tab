@@ -219,7 +219,7 @@ The package *is* published to npm (so users can `pi install npm:pi-status-tab`),
 
 If you ever want to ship pre-compiled JS (e.g. for a non-pi Node host), add a `build` script that emits to `dist/` and update `package.json#exports` and `pi.extensions`. Don't introduce this without a concrete consumer — the source-of-truth `.ts` files are part of the user-visible contract.
 
-**Node version.** `engines.node` in `package.json` pins the minimum Node to the version that the latest `@earendil-works/pi-coding-agent` (which the integration test spawns) requires. Today that's `>=22.19.0`. Bump `engines.node` and `.nvmrc` together whenever you bump the `pi` dep — otherwise `npm ci` in CI will warn (or fail under `--engine-strict`).
+**Node version.** `engines.node` in `package.json` pins the minimum Node to the version that the latest `@earendil-works/pi-coding-agent` requires. Today that's `>=22.19.0`. Bump `engines.node` and `.nvmrc` together whenever you bump the `pi` dep — otherwise `npm ci` in CI will warn (or fail under `--engine-strict`).
 
 **tsconfig notes:**
 
