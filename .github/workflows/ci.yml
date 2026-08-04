@@ -21,10 +21,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The integration test spawns the `pi` CLI. The latest
-        # `@earendil-works/pi-coding-agent` requires Node >= 22.19.0, so we
-        # pin CI to the current LTS line. Bump alongside `engines.node` in
-        # package.json.
+        # The package's `engines.node` pins Node >= 22.19.0 (matching the
+        # latest `@earendil-works/pi-coding-agent`). Bump alongside it
+        # whenever pi's minimum moves. There is no longer a spawn-pi
+        # integration test (it required an LLM key) — the tests run
+        # against in-process TypeScript only, so we just need Node.
         node: [22]
     steps:
       - name: Checkout
@@ -35,12 +36,6 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-
-      - name: Install pi (for integration tests)
-        # The integration test runs `pi -e ./src/index.ts -p` to verify the
-        # extension loads. `pi` is the CLI of `@earendil-works/pi-coding-agent`
-        # and is not on the runner PATH by default.
-        run: npm install -g @earendil-works/pi-coding-agent@latest
 
       - name: Install dependencies
         run: npm ci

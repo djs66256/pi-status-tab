@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AGENTS.md` §7 documents the Node-version coupling between this package and `pi`.
 - `AGENTS.md` §10 rewritten as a "Release process" walkthrough covering the GitHub workflow setup, the npm Trusted Publisher configuration, the `prepublishOnly` fallback, and a TL;DR checklist.
 
+### Fixed
+
+- Remove the spawn-`pi` end-to-end test from `test/integration.test.ts` (renamed the file to `test/osc.test.ts` since it now only covers the OSC writer). The test required an LLM API key to satisfy pi's startup auth check and could not run in CI. The smoke tests still cover the extension's state machine, formatters, and event wiring.
+
 ## [0.1.2] - 2026-08-04
 
 ### Changed

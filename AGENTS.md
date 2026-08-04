@@ -195,11 +195,12 @@ Three layers:
 | File                          | What it covers                                  | How to run                          |
 | ----------------------------- | ----------------------------------------------- | ----------------------------------- |
 | `test/smoke.test.ts`          | Pure unit tests of the state machine, formatters, OSC writer. | `npx tsx test/smoke.test.ts`        |
-| `test/integration.test.ts`    | Spawns `pi -e ./src/index.ts -p` to confirm the extension loads and exits cleanly. Also covers OSC writer non-TTY and accumulation edge cases. | `npx tsx test/integration.test.ts`  |
-| TypeScript                   | Strict-mode compile check.                      | `npx tsc --noEmit`                  |
-| `.github/workflows/ci.yml`    | Runs `check` + `test` on every push to `main` and on every PR. The integration step also installs `pi` globally because the integration test spawns it. | GitHub Actions UI                  |
+| `test/osc.test.ts`            | OSC writer behavior in TTY and non-TTY mode: sequence shape, accumulation, long titles. | `npx tsx test/osc.test.ts`          |
+| `.github/workflows/ci.yml`    | Runs `check` + `test` on every push to `main` and on every PR. Node 22 only (matches `engines.node`). | GitHub Actions UI                  |
 
-The `npm test` script runs both `smoke.test.ts` and `integration.test.ts` in order. The `npm run check` script runs only `tsc`. CI runs both, on Node 22 (the version `.nvmrc` pins and the only one `pi` itself supports today).
+The `npm test` script runs both `smoke.test.ts` and `osc.test.ts` in order. The `npm run check` script runs only `tsc`. Both run in CI on Node 22.
+
+There is **no** spawn-`pi` integration test. The earlier one that ran `pi -e ./src/index.ts -p` was removed because it required an LLM API key (pi's startup auth check fails without one) and therefore could not run in CI. The smoke tests already exercise the extension's state machine, formatters, and event wiring; the only remaining end-to-end check is a manual one — open pi with the extension loaded and watch the tab title change through a real run.
 
 **Test style.** Both test files roll their own minimal runner (`test()`, `eq()`, `pass/fail` counters). Don't pull in a test framework just for this — the in-tree style is intentional and zero-dep. The smoke test uses `npx tsx` (no compile step); tsx is in `devDependencies`.
 
