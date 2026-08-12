@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-12
+
+### Added
+
+- New `workflow` state kind that surfaces runs of the `workflow` tool registered by [`@quintinshaw/pi-dynamic-workflows`](https://www.npmjs.com/package/@quintinshaw/pi-dynamic-workflows). While a workflow is executing the tab title shows `⚙ π <project> · N workflows running` and the in-TUI status bar shows `workflow · N running`.
+  - The state machine gets two new counters, `workflowRunning` and `workflowTotal`, parallel to the existing `asyncRunning` / `asyncTotal` pattern. The decay-guard logic in `enterDecay()` checks `workflowRunning === 0` so a workflow that fires during the 3 s / 5 s decay window keeps the tab in the `workflow` state instead of flipping to `idle`.
+  - Synthesis order: `async/inFlight` wins over `workflowRunning` wins over `agentRunning` — the "most in-flight work" signal wins the title.
+  - New theme icon `workflowIcon` (default `⚙` U+2699 GEAR).
+  - New format token `{workflows}` showing `· N workflow(s) running` (active) or `· N workflow(s) completed` (all done, in the brief completed window).
+- New config flag `trackWorkflows` (default `true`). Set it to `false` to opt out without disabling the rest of the extension. Toggle at runtime with `/status-tab workflow on|off`.
+- 15 new smoke tests covering state-machine transitions (`onWorkflowStart` / `onWorkflowEnd`), the decay guard during a workflow fire, the synthesis priority order, render output for the gear icon and `{workflows}` token, and singular/plural formatting.
+
+### Documentation
+
+- `README.md` documents the new `⚙` state, the `{workflows}` format token, the `/status-tab workflow on|off` command, and a feature bullet pointing at `trackWorkflows`.
+- `AGENTS.md` adds a "Track a new tool as a workflow-class execution" extension point and a new event-wiring row in §4.
+
+### Known limitation
+
+- pi-dynamic-workflows does not emit on `pi.events` — its `WorkflowManager` is a private `Node.js EventEmitter` inside `extensions/workflow.ts`. The only observable surface for an external extension is the standard pi `tool_execution_start` / `tool_execution_end` events for tool name `workflow`. This means the `workflow` state reflects **top-level tool invocations only**; per-phase and per-agent events within a workflow run are not visible. A future upstream change to emit on `pi.events` would enable full tracking.
+
 ## [0.1.5] - 2026-08-04
 
 ### Fixed
