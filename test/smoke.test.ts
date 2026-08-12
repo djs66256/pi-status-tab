@@ -182,6 +182,165 @@ test("snapshot synthesizes subagents kind from counters even if stored kind is i
 	eq(snap.executing, true, "executing true while in-flight");
 });
 
+// ── workflow state machine ──────────────────────────────────────────
+
+test("workflow_start keeps state in workflow", () => {
+	const sm = new StatusStateMachine();
+	sm.onWorkflowStart();
+	const snap = sm.snapshot();
+	eq(snap.kind, "workflow", "kind should be workflow");
+	eq(snap.executing, true, "executing should be true");
+	eq(snap.subagents.workflowRunning, 1, "workflowRunning should be 1");
+	eq(snap.subagents.workflowTotal, 1, "workflowTotal should be 1");
+});
+
+test("workflow_end transitions to completed immediately", () => {
+	const sm = new StatusStateMachine();
+	sm.onWorkflowStart();
+	sm.onWorkflowEnd();
+	const snap = sm.snapshot();
+	eq(snap.kind, "completed", "kind should be completed immediately after end");
+	eq(snap.subagents.workflowRunning, 0, "workflowRunning should be 0");
+});
+
+test("workflow fires during completed decay prevents decay-to-idle", () => {
+	const sm = new StatusStateMachine();
+	sm.onAgentStart();
+	sm.onAgentEnd();
+	// now in decay window (completed) with 3-second timer pending
+	sm.onWorkflowStart(); // fires during decay, clears timer and switches to workflow
+	const snap = sm.snapshot();
+	eq(snap.kind, "workflow", "kind should switch to workflow mid-decay");
+});
+
+test("multiple workflow starts increment counter", () => {
+	const sm = new StatusStateMachine();
+	sm.onWorkflowStart();
+	sm.onWorkflowStart();
+	sm.onWorkflowStart();
+	const snap = sm.snapshot();
+	eq(snap.kind, "workflow", "kind should be workflow");
+	eq(snap.subagents.workflowRunning, 3, "workflowRunning should be 3");
+	eq(snap.subagents.workflowTotal, 3, "workflowTotal should be 3");
+});
+
+test("workflow end clamps at zero", () => {
+	const sm = new StatusStateMachine();
+	sm.onWorkflowEnd(); // nothing running
+	const snap = sm.snapshot();
+	eq(snap.subagents.workflowRunning, 0, "workflowRunning should stay 0");
+	eq(snap.subagents.workflowTotal, 0, "workflowTotal should stay 0");
+});
+
+// ── render ──────────────────────────────────────────────────────────
+
+test("renderTitle returns gear icon for workflow state", () => {
+	const sm = new StatusStateMachine();
+	sm.onWorkflowStart();
+	const snap = sm.snapshot();
+	const theme = { ...DEFAULT_THEME, workflowIcon: "⚙", project: "myproject" };
+	const title = renderTitle(snap, theme, DEFAULT_TITLE_FORMAT);
+	eq(title.includes("⚙"), true, "title should contain gear icon");
+});
+
+test("renderTitle {workflows} token shows running count", () => {
+	const sm = new StatusStateMachine();
+	sm.onWorkflowStart();
+	sm.onWorkflowStart();
+	const snap = sm.snapshot();
+	const theme = { ...DEFAULT_THEME, project: "p" };
+	const title = renderTitle(snap, theme, { format: "{workflows}", statusFormat: "" });
+	eq(title.includes("2 workflows running"), true, "workflows token should show running count");
+});
+
+test("renderStatusBar returns workflow label for workflow state", () => {
+	const sm = new StatusStateMachine();
+	sm.onWorkflowStart();
+	const snap = sm.snapshot();
+	const theme = { ...DEFAULT_THEME, project: "p" };
+	const bar = renderStatusBar(snap, theme, { format: "", statusFormat: "{label}" });
+	eq(bar, "workflow", "status bar label should be 'workflow'");
+});
+
+test("{workflows} token is empty when no workflows have been tracked", () => {
+	const sm = new StatusStateMachine();
+	sm.onAgentStart();
+	sm.onAgentEnd();
+	const snap = sm.snapshot();
+	eq(snap.subagents.workflowRunning, 0, "workflowRunning should be 0");
+	eq(snap.subagents.workflowTotal, 0, "workflowTotal should be 0");
+	const theme = { ...DEFAULT_THEME, project: "p" };
+	const title = renderTitle(snap, theme, { format: "{workflows}", statusFormat: "" });
+	eq(title, "", "{workflows} token should be empty when no workflows tracked");
+});
+
+test("executing is true while a workflow is running", () => {
+	const sm = new StatusStateMachine();
+	sm.onWorkflowStart();
+	const snap = sm.snapshot();
+	eq(snap.executing, true, "executing should be true during workflow");
+	eq(snap.kind, "workflow", "kind should be workflow");
+});
+
+test("workflow and agent concurrent: synthesis shows workflow (workflowRunning checked before agentRunning)", () => {
+	const sm = new StatusStateMachine();
+	sm.onAgentStart();
+	sm.onWorkflowStart();
+	const snap = sm.snapshot();
+	eq(snap.kind, "workflow", "kind should be workflow when both agent and workflow running");
+	eq(snap.executing, true, "executing should be true");
+});
+
+test("{workflows} token shows singular '1 workflow running' and plural '2 workflows running'", () => {
+	const sm = new StatusStateMachine();
+	sm.onWorkflowStart();
+	let snap = sm.snapshot();
+	const theme = { ...DEFAULT_THEME, project: "p" };
+	let title = renderTitle(snap, theme, { format: "{workflows}", statusFormat: "" });
+	eq(title.includes("1 workflow running"), true, "singular form for 1 workflow");
+
+	sm.onWorkflowStart();
+	snap = sm.snapshot();
+	title = renderTitle(snap, theme, { format: "{workflows}", statusFormat: "" });
+	eq(title.includes("2 workflows running"), true, "plural form for 2 workflows");
+});
+
+test("status bar detail shows workflow running count", () => {
+	const sm = new StatusStateMachine();
+	sm.onWorkflowStart();
+	sm.onWorkflowStart();
+	const snap = sm.snapshot();
+	const theme = { ...DEFAULT_THEME, project: "p" };
+	// {workflows} token must be present in statusFormat to be rendered
+	const bar = renderStatusBar(snap, theme, { format: "", statusFormat: "{label}{detail}{workflows}" });
+	eq(bar.includes("workflow"), true, "label should be 'workflow'");
+	eq(bar.includes("2 running"), true, "detail should show '2 running'");
+});
+
+test("workflows token shows completed count in status bar after all workflows end", () => {
+	const sm = new StatusStateMachine({ completedDurationMs: 10000 });
+	sm.onWorkflowStart();
+	sm.onWorkflowEnd();
+	sm.onWorkflowStart();
+	sm.onWorkflowEnd();
+	const snap = sm.snapshot();
+	eq(snap.kind, "completed", "kind should be completed after all workflows end");
+	const theme = { ...DEFAULT_THEME, project: "p" };
+	// {workflows} is appended separately from {detail}; {detail} covers subagents/async, {workflows} covers workflows
+	const bar = renderStatusBar(snap, theme, { format: "", statusFormat: "{label}{detail}{workflows}" });
+	eq(bar.includes("done"), true, "label should be 'done'");
+	eq(bar.includes("2 workflows completed"), true, "{workflows} token should show 2 workflows completed");
+});
+
+test("async and workflow concurrent: synthesis returns 'subagents' (async/inFlight checked before workflowRunning)", () => {
+	const sm = new StatusStateMachine();
+	sm.onAsyncSubagentStart();
+	sm.onWorkflowStart();
+	let snap = sm.snapshot();
+	eq(snap.kind, "subagents", "asyncRunning > 0 takes priority over workflowRunning > 0");
+	eq(snap.executing, true, "executing should be true");
+});
+
 // Minimal test runner
 let pass = 0;
 let fail = 0;

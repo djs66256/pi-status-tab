@@ -18,6 +18,7 @@ The same information also shows in the in-TUI status bar at the bottom of pi.
 
 - **Tab title** — animated braille spinner while working, icon-prefixed states for idle / working / subagents / done / error.
 - **Subagent-aware** — correctly stays in the "subagents" state until *all* sync and async subagents finish, even after `agent_settled`.
+- **Workflow tracking** (`trackWorkflows`, default on): surfaces `tool_execution_start` / `tool_execution_end` for the `"workflow"` tool registered by `pi-dynamic-workflows`. Shows the `⚙` icon and running count in the tab title while a workflow is executing.
 - **Configurable** — pick a custom title format, toggle the spinner, switch between `setTitle()` and direct OSC 2 writes.
 - **No external deps** — uses only `pi-coding-agent` and the Node standard library.
 
@@ -62,19 +63,21 @@ It's on by default. Run a prompt in pi and watch the tab title change as the age
 /status-tab spinner on|off   Toggle braille spinner animation
 /status-tab async on|off     Toggle pi-subagents async tracking
 /status-tab format <string>  Set a custom title format
+/status-tab workflow on|off  Toggle workflow tracking (pi-dynamic-workflows)
 /status-tab reset            Restore all defaults
 ```
 
 ### Title format tokens
 
-| Token        | Replaced with                                              |
-| ------------ | ---------------------------------------------------------- |
-| `{icon}`     | State icon — empty, `⏳`, `🔄`, `✓`, `✗`                  |
-| `{symbol}`   | `π` (or whatever you customize it to)                      |
-| `{project}`  | Project name (cwd basename)                                |
-| `{session}`  | ` · <name>` when a session name is set                     |
-| `{turn}`     | ` · turn N` while the agent is iterating                   |
-| `{progress}` | Subagent progress, e.g. ` · subagents 1/3 (+2 async)`      |
+| Token         | Replaced with                                                                                     |
+| ------------- | -------------------------------------------------------------------------------------------------- |
+| `{icon}`      | State icon — empty, `⏳`, `🔄`, `⚙`, `✓`, `✗`                                                   |
+| `{symbol}`    | `π` (or whatever you customize it to)                                                               |
+| `{project}`   | Project name (cwd basename)                                                                       |
+| `{session}`   | ` · <name>` when a session name is set                                                              |
+| `{turn}`      | ` · turn N` while the agent is iterating                                                            |
+| `{progress}`  | Subagent progress, e.g. ` · subagents 1/3 (+2 async)`                                               |
+| `{workflows}` | ` · N workflows running` when workflow runs are active; ` · N workflows completed` when none are running; empty when no workflows have been tracked this session |
 
 The status-bar template additionally understands `{label}` (e.g. `working`, `done`, `error`) and `{detail}` (a short qualifier).
 
@@ -82,6 +85,12 @@ Example — a Claude-Code-style tab:
 
 ```
 /status-tab format "{icon} {project} · {progress}"
+```
+
+Example — workflow run:
+
+```
+⚙ π my-project · 2 workflows running
 ```
 
 ## Configuration
@@ -100,6 +109,7 @@ Settings are persisted to:
   "updateStatusBar": true,
   "trackSubagents": true,
   "trackAsyncSubagents": true,
+  "trackWorkflows": true,
   "animateSpinner": true,
   "spinnerIntervalMs": 120,
   "completedDurationMs": 3000,

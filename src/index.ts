@@ -69,6 +69,15 @@ const SUBAGENT_TOOL_NAMES = new Set(["subagent"]);
 const SUBAGENT_ASYNC_STARTED_EVENT = "subagent:async-started";
 const SUBAGENT_ASYNC_COMPLETE_EVENT = "subagent:async-complete";
 
+/**
+ * Note: pi-dynamic-workflows does NOT emit to pi.events.
+ * The WorkflowManager is a private EventEmitter inside extensions/workflow.ts.
+ * The only observable surface is tool_execution_start/end for tool name "workflow".
+ * This means the "workflow" state reflects top-level tool invocations only —
+ * per-agent events within a workflow run are not visible from this extension.
+ */
+const WORKFLOW_TOOL_NAME = "workflow";
+
 const STATUS_KEY = "pi-status-tab";
 
 export default function (pi: ExtensionAPI) {
@@ -133,7 +142,11 @@ export default function (pi: ExtensionAPI) {
 
 	function workingIconOverride(): string | undefined {
 		if (!config.animateSpinner) return undefined;
-		if (currentSnapshot.kind !== "working" && currentSnapshot.kind !== "subagents") {
+		if (
+			currentSnapshot.kind !== "working" &&
+			currentSnapshot.kind !== "subagents" &&
+			currentSnapshot.kind !== "workflow"
+		) {
 			return undefined;
 		}
 		return SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
@@ -179,7 +192,9 @@ export default function (pi: ExtensionAPI) {
 		// Spin the spinner only while we have something animatable.
 		if (
 			config.animateSpinner &&
-			(currentSnapshot.kind === "working" || currentSnapshot.kind === "subagents")
+			(currentSnapshot.kind === "working" ||
+				currentSnapshot.kind === "subagents" ||
+				currentSnapshot.kind === "workflow")
 		) {
 			startSpinner();
 		} else {
@@ -282,6 +297,8 @@ export default function (pi: ExtensionAPI) {
 		if (!config.trackSubagents) return;
 		if (SUBAGENT_TOOL_NAMES.has(event.toolName)) {
 			stateMachine.onSubagentStart();
+		} else if (event.toolName === WORKFLOW_TOOL_NAME && config.trackWorkflows) {
+			stateMachine.onWorkflowStart();
 		}
 	});
 
@@ -289,6 +306,8 @@ export default function (pi: ExtensionAPI) {
 		if (!config.trackSubagents) return;
 		if (SUBAGENT_TOOL_NAMES.has(event.toolName)) {
 			stateMachine.onSubagentEnd();
+		} else if (event.toolName === WORKFLOW_TOOL_NAME && config.trackWorkflows) {
+			stateMachine.onWorkflowEnd();
 		}
 	});
 
@@ -310,7 +329,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("status-tab", {
 		description:
-			"Configure pi-status-tab (on/off, title, osc, status, spinner, async, format, reset). Usage: /status-tab [option]",
+			"Configure pi-status-tab (on/off, title, osc, status, spinner, async, workflow, format, reset). Usage: /status-tab [option]",
 		handler: async (args, ctx) => {
 			const trimmed = args.trim();
 			if (!trimmed) {
@@ -394,10 +413,19 @@ export default function (pi: ExtensionAPI) {
 					ctx.ui.notify(`async subagents: ${arg}`, "info");
 					return;
 				}
+				case "workflow": {
+					if (arg !== "on" && arg !== "off") {
+						ctx.ui.notify("Usage: /status-tab workflow on|off", "error");
+						return;
+					}
+					config = updateConfig({ trackWorkflows: arg === "on" });
+					ctx.ui.notify(`workflows: ${arg}`, "info");
+					return;
+				}
 				case "format": {
 					if (!arg) {
 						ctx.ui.notify(
-							"Usage: /status-tab format <template>\nTokens: {icon} {symbol} {project} {session} {turn} {progress}",
+							"Usage: /status-tab format <template>\nTokens: {icon} {symbol} {project} {session} {turn} {progress} {workflows}",
 							"info",
 						);
 						return;
@@ -433,7 +461,7 @@ export default function (pi: ExtensionAPI) {
 		const lines = [
 			`pi-status-tab ${config.enabled ? "enabled" : "disabled"}`,
 			`title=${config.updateTitle}  status=${config.updateStatusBar}  osc=${config.useOsc} (${oscInfo})`,
-			`spinner=${config.animateSpinner}  async=${config.trackAsyncSubagents}  sync=${config.trackSubagents}`,
+		`spinner=${config.animateSpinner}  async=${config.trackAsyncSubagents}  sync=${config.trackSubagents}  workflow=${config.trackWorkflows}`,
 			`format: ${config.titleFormat}`,
 			ttyInfo,
 			`state: ${currentSnapshot.kind}` +

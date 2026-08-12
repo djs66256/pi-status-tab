@@ -20,7 +20,7 @@
  * The "completed" state only decays to "idle" if nothing is still running.
  */
 
-export type StatusKind = "idle" | "working" | "subagents" | "completed" | "error";
+export type StatusKind = "idle" | "working" | "subagents" | "workflow" | "completed" | "error";
 
 export interface SubagentProgress {
 	/** Subagents started in the current low-level agent run. */
@@ -31,6 +31,10 @@ export interface SubagentProgress {
 	asyncRunning: number;
 	/** Async subagents ever started in this session. */
 	asyncTotal: number;
+	/** Workflow invocations currently running. */
+	workflowRunning: number;
+	/** Workflow invocations ever started in this session. */
+	workflowTotal: number;
 }
 
 export interface StatusSnapshot {
@@ -54,6 +58,8 @@ interface MutableState {
 	currentRunCompleted: number;
 	asyncRunning: number;
 	asyncTotal: number;
+	workflowRunning: number;
+	workflowTotal: number;
 	turnIndex: number;
 	errorMessage?: string;
 	decayTimer?: ReturnType<typeof setTimeout>;
@@ -67,6 +73,8 @@ const INITIAL_STATE: MutableState = {
 	currentRunCompleted: 0,
 	asyncRunning: 0,
 	asyncTotal: 0,
+	workflowRunning: 0,
+	workflowTotal: 0,
 	turnIndex: 0,
 };
 
@@ -86,9 +94,15 @@ export class StatusStateMachine {
 			currentRunCompleted: this.state.currentRunCompleted,
 			asyncRunning: this.state.asyncRunning,
 			asyncTotal: this.state.asyncTotal,
+			workflowRunning: this.state.workflowRunning,
+			workflowTotal: this.state.workflowTotal,
 		};
 		const inFlight = this.state.currentRunTotal - this.state.currentRunCompleted;
-		const executing = this.state.agentRunning || this.state.asyncRunning > 0 || inFlight > 0;
+		const executing =
+			this.state.agentRunning ||
+			this.state.asyncRunning > 0 ||
+			this.state.workflowRunning > 0 ||
+			inFlight > 0;
 		// Synthesize the displayed kind from the real counters, so that
 		// any combination of in-flight work overrides the stored kind.
 		// The stored kind drives the decay timer; the synthesized kind
@@ -96,6 +110,9 @@ export class StatusStateMachine {
 		const kind: StatusKind = (() => {
 			if (this.state.asyncRunning > 0 || inFlight > 0) {
 				return "subagents";
+			}
+			if (this.state.workflowRunning > 0) {
+				return "workflow";
 			}
 			if (this.state.agentRunning) {
 				return "working";
@@ -196,6 +213,33 @@ export class StatusStateMachine {
 		this.notify();
 	}
 
+	/** Workflow tool invocation started (tool_execution_start for "workflow"). */
+	onWorkflowStart(): void {
+		this.state.workflowRunning += 1;
+		this.state.workflowTotal += 1;
+		if (
+			this.state.kind === "completed" ||
+			this.state.kind === "error" ||
+			this.state.kind === "idle"
+		) {
+			this.clearDecayTimer();
+			this.state.kind = "workflow";
+		}
+		this.notify();
+	}
+
+	/** Workflow tool invocation ended (tool_execution_end for "workflow"). */
+	onWorkflowEnd(): void {
+		this.state.workflowRunning = Math.max(0, this.state.workflowRunning - 1);
+		if (this.state.workflowRunning === 0 && !this.state.agentRunning) {
+			if (this.state.kind === "workflow") {
+				this.enterDecay("completed");
+				return;
+			}
+		}
+		this.notify();
+	}
+
 	private enterDecay(kind: "completed" | "error"): void {
 		this.clearDecayTimer();
 		this.state.kind = kind;
@@ -204,7 +248,11 @@ export class StatusStateMachine {
 		this.state.decayTimer = setTimeout(() => {
 			this.state.decayTimer = undefined;
 			// Only decay to idle if nothing else is running.
-			if (this.state.asyncRunning === 0 && !this.state.agentRunning) {
+			if (
+				this.state.asyncRunning === 0 &&
+				this.state.workflowRunning === 0 &&
+				!this.state.agentRunning
+			) {
 				this.state.kind = "idle";
 				this.state.decayAt = undefined;
 				this.state.errorMessage = undefined;

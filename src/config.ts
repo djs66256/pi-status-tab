@@ -28,6 +28,8 @@ export interface StatusTabConfig {
 	trackSubagents: boolean;
 	/** Whether to track async subagents via pi.events (requires pi-subagents). */
 	trackAsyncSubagents: boolean;
+	/** Whether to track workflow tool invocations from pi-dynamic-workflows. */
+	trackWorkflows: boolean;
 	/** Whether to animate the working icon with a spinner. */
 	animateSpinner: boolean;
 	/** Spinner animation interval in milliseconds. */
@@ -51,6 +53,7 @@ export const DEFAULT_CONFIG: StatusTabConfig = {
 	updateStatusBar: true,
 	trackSubagents: true,
 	trackAsyncSubagents: true,
+	trackWorkflows: true,
 	animateSpinner: true,
 	spinnerIntervalMs: 120,
 	completedDurationMs: 3000,

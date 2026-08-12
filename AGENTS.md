@@ -87,6 +87,7 @@ States (the displayed kind, which the renderer uses):
 | `idle`      | No work in flight. Default state.                            |
 | `working`   | Main agent is in an active run; no subagents in flight.     |
 | `subagents` | At least one sync or async subagent is still running.       |
+| `workflow`  | At least one workflow invocation (from pi-dynamic-workflows) is running. |
 | `completed` | Run finished OK; held briefly before decaying to `idle`.    |
 | `error`     | Run failed; held briefly before decaying to `idle`.          |
 
@@ -148,6 +149,8 @@ A single `StatusTabConfig` interface, a `DEFAULT_CONFIG` constant, and three I/O
 | `turn_start`                             | Records turn index. | `onTurnStart(turnIndex)` |
 | `agent_end`                              | Inspects messages for `stopReason` of `error` / `aborted`. | `onAgentError(msg?)` or `onAgentEnd()` |
 | `tool_execution_start` (subagent)        | Increments in-flight count. | `onSubagentStart()` |
+| `tool_execution_start` (`"workflow"`) | `src/index.ts` | `onWorkflowStart()` |
+| `tool_execution_end` (`"workflow"`)   | `src/index.ts` | `onWorkflowEnd()` |
 | `tool_execution_end` (subagent)          | Decrements in-flight count. | `onSubagentEnd()` |
 | `pi.events("subagent:async-started")`    | Increments async counter. | `onAsyncSubagentStart()` |
 | `pi.events("subagent:async-complete")`   | Decrements async counter. | `onAsyncSubagentComplete()` |
@@ -179,6 +182,15 @@ The async event bus is the alternative path: any extension can emit `pi.events.e
 3. Add a case to `iconFor()` in `src/title.ts` and a case to `renderStatusDetail()`.
 4. Add a new icon to `TitleTheme` and `DEFAULT_THEME`.
 5. Add a test in `test/smoke.test.ts` covering every transition into and out of the new state.
+
+### Track a new tool as a workflow-class execution
+
+`pi-dynamic-workflows` registers the `"workflow"` tool. Because its `WorkflowManager` is a private EventEmitter (not wired to `pi.events`), the only observable surface is `tool_execution_start` / `tool_execution_end`. To add another tool as a workflow-class tracker:
+
+1. Add the tool name to `WORKFLOW_TOOL_NAME` (or make it a `Set<string>` if you need multiple).
+2. Add an `else if` branch in the `tool_execution_start` / `tool_execution_end` handler in `src/index.ts`, mirroring the `"workflow"` branch exactly.
+3. The state machine methods (`onWorkflowStart` / `onWorkflowEnd`) and counters are shared — no per-tool state needed. All workflow-class tools increment the same `workflowRunning` / `workflowTotal` counters.
+4. Add a test in `test/smoke.test.ts` covering the tool name match and the start/end bookkeeping.
 
 ### Add a new configuration flag
 

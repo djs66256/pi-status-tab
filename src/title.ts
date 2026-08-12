@@ -19,6 +19,8 @@ export interface TitleTheme {
 	workingIcon: string;
 	/** Icon shown while subagents are running. */
 	subagentsIcon: string;
+	/** Icon shown while a workflow is running. */
+	workflowIcon: string;
 	/** Icon shown briefly after successful completion. */
 	completedIcon: string;
 	/** Icon shown briefly after an error. */
@@ -56,6 +58,7 @@ export const DEFAULT_THEME: TitleTheme = {
 	idleIcon: "",
 	workingIcon: "⏳",
 	subagentsIcon: "🔄",
+	workflowIcon: "⚙",
 	completedIcon: "✓",
 	errorIcon: "✗",
 	project: "pi",
@@ -77,6 +80,12 @@ export function renderTitle(
 		session,
 		progress,
 		turn: snapshot.turnIndex > 0 ? ` · turn ${snapshot.turnIndex}` : "",
+		workflows:
+			snapshot.subagents.workflowRunning > 0
+				? ` · ${snapshot.subagents.workflowRunning} workflow${snapshot.subagents.workflowRunning === 1 ? "" : "s"} running`
+				: snapshot.subagents.workflowTotal > 0
+				  ? ` · ${snapshot.subagents.workflowTotal} workflow${snapshot.subagents.workflowTotal === 1 ? "" : "s"} completed`
+				  : "",
 	};
 	return applyFormat(format.format, tokens).trim();
 }
@@ -97,6 +106,12 @@ export function renderStatusBar(
 		turn: "",
 		label,
 		detail,
+		workflows:
+			snapshot.subagents.workflowRunning > 0
+				? ` · ${snapshot.subagents.workflowRunning} workflow${snapshot.subagents.workflowRunning === 1 ? "" : "s"} running`
+				: snapshot.subagents.workflowTotal > 0
+				  ? ` · ${snapshot.subagents.workflowTotal} workflow${snapshot.subagents.workflowTotal === 1 ? "" : "s"} completed`
+				  : "",
 	};
 	return applyFormat(format.statusFormat, tokens).trim();
 }
@@ -143,6 +158,16 @@ function renderStatusDetail(snapshot: StatusSnapshot): { label: string; detail: 
 			if (asyncRunning > 0) parts.push(`${asyncRunning} async`);
 			return { label: "subagents", detail: parts.length > 0 ? ` · ${parts.join(" · ")}` : "" };
 		}
+		case "workflow": {
+			const { workflowRunning, workflowTotal } = snapshot.subagents;
+			return {
+				label: "workflow",
+				detail:
+					workflowRunning > 0
+						? ` · ${workflowRunning} running`
+						: ` · ${workflowTotal} completed`,
+			};
+		}
 		case "completed": {
 			const { currentRunTotal, asyncTotal } = snapshot.subagents;
 			const parts: string[] = [];
@@ -167,6 +192,8 @@ function iconFor(
 			return workingIconOverride ?? theme.workingIcon;
 		case "subagents":
 			return theme.subagentsIcon;
+		case "workflow":
+			return workingIconOverride ?? theme.workflowIcon;
 		case "completed":
 			return theme.completedIcon;
 		case "error":
