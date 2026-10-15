@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the main run active until Pi emits `agent_settled`, preventing premature completion during automatic retries, compaction, queued work, and `agent_before_settle` continuations.
+- Treat user cancellation as an idle settlement instead of a task error.
+- Apply `completedDurationMs` and `errorDurationMs` from configuration instead of fixed constants.
+- Declare Pi as a peer dependency so package installation does not bundle a second host runtime.
+
+### Added
+
+- Show ordinary tool names in the terminal title and status bar.
+- Show a distinct waiting state for blocking extension UI prompts.
+- Add extension-event wiring regressions and require the verified Pi 1.2.0 host baseline.
+
 ## [0.2.0] - 2026-08-12
 
 ### Added

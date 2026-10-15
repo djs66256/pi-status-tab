@@ -17,6 +17,10 @@ export interface TitleTheme {
 	idleIcon: string;
 	/** Icon shown while the main agent is working (animated by caller). */
 	workingIcon: string;
+	/** Icon shown while an ordinary tool is running. */
+	toolIcon: string;
+	/** Icon shown while Pi is blocked on a user-facing prompt. */
+	waitingIcon: string;
 	/** Icon shown while subagents are running. */
 	subagentsIcon: string;
 	/** Icon shown while a workflow is running. */
@@ -57,6 +61,8 @@ export const DEFAULT_THEME: TitleTheme = {
 	appSymbol: "π",
 	idleIcon: "",
 	workingIcon: "⏳",
+	toolIcon: "▸",
+	waitingIcon: "✋",
 	subagentsIcon: "🔄",
 	workflowIcon: "⚙",
 	completedIcon: "✓",
@@ -118,6 +124,12 @@ export function renderStatusBar(
 
 function renderProgress(snapshot: StatusSnapshot): string {
 	const { currentRunTotal, currentRunCompleted, asyncRunning } = snapshot.subagents;
+	if (snapshot.kind === "tool") {
+		return snapshot.toolName ? ` · ${snapshot.toolName}` : "";
+	}
+	if (snapshot.kind === "waiting") {
+		return ` · waiting for ${snapshot.promptKind ?? "input"}`;
+	}
 	if (snapshot.kind === "subagents") {
 		const inFlight = currentRunTotal - currentRunCompleted;
 		const parts: string[] = [];
@@ -147,6 +159,10 @@ function renderStatusDetail(snapshot: StatusSnapshot): { label: string; detail: 
 				label: "working",
 				detail: snapshot.turnIndex > 0 ? ` · turn ${snapshot.turnIndex}` : "",
 			};
+		case "tool":
+			return { label: "tool", detail: snapshot.toolName ? ` · ${snapshot.toolName}` : "" };
+		case "waiting":
+			return { label: "waiting", detail: ` · ${snapshot.promptKind ?? "input"}` };
 		case "subagents": {
 			const { currentRunTotal, currentRunCompleted, asyncRunning } = snapshot.subagents;
 			const inFlight = currentRunTotal - currentRunCompleted;
@@ -190,6 +206,10 @@ function iconFor(
 			return theme.idleIcon;
 		case "working":
 			return workingIconOverride ?? theme.workingIcon;
+		case "tool":
+			return theme.toolIcon;
+		case "waiting":
+			return theme.waitingIcon;
 		case "subagents":
 			return theme.subagentsIcon;
 		case "workflow":

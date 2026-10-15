@@ -5,8 +5,10 @@
 ```
 π my-project                       ← idle
 ⏳ π my-project · turn 3           ← working
+▸ π my-project · bash              ← running a tool
+✋ π my-project · waiting for confirm ← waiting on you
 🔄 π my-project · subagents 1/3    ← waiting on subagents
-✓ π my-project                     ← done
+✓ π my-project                     ← fully settled
 ✗ π my-project                     ← error
 ```
 
@@ -16,13 +18,16 @@ The same information also shows in the in-TUI status bar at the bottom of pi.
 
 ## Features
 
-- **Tab title** — animated braille spinner while working, icon-prefixed states for idle / working / subagents / done / error.
-- **Subagent-aware** — correctly stays in the "subagents" state until *all* sync and async subagents finish, even after `agent_settled`.
+- **Tab title** — animated braille spinner while working, with distinct states for ordinary tools, blocking user prompts, subagents, workflows, settled completion, and errors.
+- **Pi 1.2 lifecycle-aware** — `agent_end` records a low-level result, while `agent_settled` is the only main-run completion boundary. Automatic retries, compaction, queued work, and `agent_before_settle` continuations therefore never appear idle or complete prematurely.
+- **Subagent-aware** — correctly stays in the "subagents" state until all sync and async subagents finish, including background work that outlives the main run.
 - **Workflow tracking** (`trackWorkflows`, default on): surfaces `tool_execution_start` / `tool_execution_end` for the `"workflow"` tool registered by `pi-dynamic-workflows`. Shows the `⚙` icon and running count in the tab title while a workflow is executing.
-- **Configurable** — pick a custom title format, toggle the spinner, switch between `setTitle()` and direct OSC 2 writes.
-- **No external deps** — uses only `pi-coding-agent` and the Node standard library.
+- **Configurable** — customize the title format, spinner, OSC path, and completion/error display durations.
+- **Host-safe package** — Pi is declared as a peer dependency, so installing the extension does not bundle a second host runtime.
 
 ## Installation
+
+Requires **Pi 1.2.0 or newer**, the development and real-TUI verification baseline for this lifecycle behavior.
 
 The extension is published to npm as `pi-status-tab`. Install it from there:
 
@@ -50,7 +55,7 @@ Once installed, the next `pi` (or `/reload`) picks it up.
 
 ## Usage
 
-It's on by default. Run a prompt in pi and watch the tab title change as the agent starts, iterates, waits on subagents, and finishes.
+It's on by default. Run a prompt in pi and watch the tab title change as the agent starts, runs tools, waits for extension prompts or subagents, and finally settles.
 
 ### Commands
 
@@ -71,12 +76,12 @@ It's on by default. Run a prompt in pi and watch the tab title change as the age
 
 | Token         | Replaced with                                                                                     |
 | ------------- | -------------------------------------------------------------------------------------------------- |
-| `{icon}`      | State icon — empty, `⏳`, `🔄`, `⚙`, `✓`, `✗`                                                   |
+| `{icon}`      | State icon — empty, `⏳`, `▸`, `✋`, `🔄`, `⚙`, `✓`, `✗`                                          |
 | `{symbol}`    | `π` (or whatever you customize it to)                                                               |
 | `{project}`   | Project name (cwd basename)                                                                       |
 | `{session}`   | ` · <name>` when a session name is set                                                              |
 | `{turn}`      | ` · turn N` while the agent is iterating                                                            |
-| `{progress}`  | Subagent progress, e.g. ` · subagents 1/3 (+2 async)`                                               |
+| `{progress}`  | Active detail: tool name, blocking prompt kind, turn, or subagent progress                           |
 | `{workflows}` | ` · N workflows running` when workflow runs are active; ` · N workflows completed` when none are running; empty when no workflows have been tracked this session |
 
 The status-bar template additionally understands `{label}` (e.g. `working`, `done`, `error`) and `{detail}` (a short qualifier).
@@ -132,6 +137,7 @@ Edit the file directly, or use the `/status-tab` command for the common toggles.
 - **Terminals** that respect OSC 2 (Set Window Title): iTerm2, Zed, kitty, WezTerm, Alacritty, GNOME Terminal, Windows Terminal, Ghostty, Hyper, tmux, screen, Warp, Apple Terminal, VS Code integrated terminal, …
 - **Async subagent tracking** requires any extension that emits `subagent:async-started` / `subagent:async-complete` on the `pi.events` bus (such as [pi-subagents](https://github.com/i-am-bee/pi-subagents)).
 - **Sync subagent tracking** matches any tool registered with the name `subagent` (case-sensitive).
+- **Run completion** follows Pi's `agent_settled` contract, so retries, recovery, compaction, and queued continuation remain active.
 
 ## Project layout
 
@@ -143,8 +149,8 @@ src/
   osc.ts        OSC escape sequence writer
   config.ts     Persistent configuration
 test/
-  smoke.test.ts        Unit tests
-  integration.test.ts  Spawns pi to verify the extension loads
+  smoke.test.ts  State, renderer, and extension-event wiring tests
+  osc.test.ts    OSC writer tests
 ```
 
 ## Contributing / development
