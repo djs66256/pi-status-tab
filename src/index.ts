@@ -9,8 +9,10 @@
  * ─────────────
  *   • `π my-project`                       — ready / idle
  *   • `⏳ π my-project · turn 3`           — main agent working
+ *   • `▸ π my-project · bash`              — ordinary tool running
+ *   • `✋ π my-project · waiting for confirm` — waiting on the user
  *   • `🔄 π my-project · subagents 1/3`    — subagents running
- *   • `✓ π my-project`                     — done (briefly)
+ *   • `✓ π my-project`                     — fully settled (briefly)
  *   • `✗ π my-project`                     — error (briefly)
  *
  * How it tracks subagents
@@ -101,7 +103,7 @@ export default function (pi: ExtensionAPI) {
 		applyToTerminal();
 	});
 
-	// Re-render at spinner cadence while working/subagents. This makes
+	// Re-render at spinner cadence while working/subagents/workflows. This makes
 	// the animation frame rate independent of event traffic.
 	function startSpinner() {
 		stopSpinner();
@@ -212,6 +214,7 @@ export default function (pi: ExtensionAPI) {
 		// across /new, /resume, or /reload.
 		stateMachine.reset();
 		config = loadConfig();
+		stateMachine.setDurations(config);
 		osc = config.useOsc && isOscAvailable() ? createOscWriter() : null;
 
 		const baseTitle = getBaseTitle();
@@ -240,17 +243,19 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		stopSpinner();
-		// Restore a clean idle title on shutdown so the tab doesn't
-		// stay stuck on a working state.
-		if (currentCtx) {
+		// Detach rendering before reset so its notification cannot overwrite
+		// the clean base title restored for the terminal after this runtime.
+		const ctx = currentCtx;
+		currentCtx = undefined;
+		stateMachine.reset();
+		if (ctx) {
 			try {
-				currentCtx.ui.setTitle(lastBaseTitle);
+				ctx.ui.setStatus(STATUS_KEY, undefined);
+				ctx.ui.setTitle(lastBaseTitle);
 			} catch {
 				// ignore
 			}
 		}
-		stateMachine.reset();
-		currentCtx = undefined;
 	});
 
 	// ───────────────────────────────────────────────────────────────
@@ -267,26 +272,32 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("agent_end", async (event) => {
-		// Try to detect errors from the last assistant message.
+		let outcome: "completed" | "error" | "aborted" = "completed";
 		let errorMessage: string | undefined;
-		const messages = (event as { messages?: Array<{ role: string; stopReason?: string; errorMessage?: string }> })
-			.messages;
-		if (Array.isArray(messages)) {
-			for (let i = messages.length - 1; i >= 0; i--) {
-				const m = messages[i];
-				if (m?.role === "assistant") {
-					if (m.stopReason === "error" || m.stopReason === "aborted") {
-						errorMessage = m.errorMessage ?? m.stopReason;
-					}
-					break;
-				}
+		for (let i = event.messages.length - 1; i >= 0; i--) {
+			const message = event.messages[i];
+			if (message?.role !== "assistant") continue;
+			if (message.stopReason === "error" || message.stopReason === "aborted") {
+				outcome = message.stopReason;
+				errorMessage = message.errorMessage ?? message.stopReason;
 			}
+			break;
 		}
-		if (errorMessage) {
-			stateMachine.onAgentError(errorMessage);
-		} else {
-			stateMachine.onAgentEnd();
-		}
+		// `agent_end` closes one low-level run. Pi may still retry, compact,
+		// process queued work, or continue from `agent_before_settle`.
+		stateMachine.onAgentEnd(outcome, errorMessage);
+	});
+
+	pi.on("agent_settled", async (event) => {
+		stateMachine.onAgentSettled(event.aborted);
+	});
+
+	pi.on("ui_prompt_start", async (event) => {
+		stateMachine.onPromptStart(event.kind);
+	});
+
+	pi.on("ui_prompt_end", async (event) => {
+		stateMachine.onPromptEnd(event.kind);
 	});
 
 	// ───────────────────────────────────────────────────────────────
@@ -294,20 +305,22 @@ export default function (pi: ExtensionAPI) {
 	// ───────────────────────────────────────────────────────────────
 
 	pi.on("tool_execution_start", async (event) => {
-		if (!config.trackSubagents) return;
-		if (SUBAGENT_TOOL_NAMES.has(event.toolName)) {
+		if (config.trackSubagents && SUBAGENT_TOOL_NAMES.has(event.toolName)) {
 			stateMachine.onSubagentStart();
 		} else if (event.toolName === WORKFLOW_TOOL_NAME && config.trackWorkflows) {
 			stateMachine.onWorkflowStart();
+		} else {
+			stateMachine.onToolStart(event.toolName);
 		}
 	});
 
 	pi.on("tool_execution_end", async (event) => {
-		if (!config.trackSubagents) return;
-		if (SUBAGENT_TOOL_NAMES.has(event.toolName)) {
+		if (config.trackSubagents && SUBAGENT_TOOL_NAMES.has(event.toolName)) {
 			stateMachine.onSubagentEnd();
 		} else if (event.toolName === WORKFLOW_TOOL_NAME && config.trackWorkflows) {
 			stateMachine.onWorkflowEnd();
+		} else {
+			stateMachine.onToolEnd(event.toolName);
 		}
 	});
 
@@ -352,6 +365,7 @@ export default function (pi: ExtensionAPI) {
 				case "off":
 				case "disable": {
 					config = updateConfig({ enabled: false });
+					ctx.ui.setStatus(STATUS_KEY, undefined);
 					ctx.ui.setTitle(lastBaseTitle);
 					ctx.ui.notify("pi-status-tab: disabled", "info");
 					return;
@@ -390,7 +404,8 @@ export default function (pi: ExtensionAPI) {
 						return;
 					}
 					config = updateConfig({ updateStatusBar: arg === "on" });
-					applyToTerminal();
+					if (arg === "off") ctx.ui.setStatus(STATUS_KEY, undefined);
+					else applyToTerminal();
 					ctx.ui.notify(`status bar: ${arg}`, "info");
 					return;
 				}
@@ -438,6 +453,7 @@ export default function (pi: ExtensionAPI) {
 				case "reset": {
 					config = { ...DEFAULT_CONFIG };
 					saveConfig(config);
+					stateMachine.setDurations(config);
 					osc = config.useOsc && isOscAvailable() ? createOscWriter() : null;
 					applyToTerminal();
 					ctx.ui.notify("pi-status-tab: reset to defaults", "info");

@@ -12,6 +12,9 @@ import {
 	renderTitle,
 	type TitleTheme,
 } from "../src/title.ts";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { createBufferedOscWriter, OSC } from "../src/osc.ts";
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [];
@@ -68,23 +71,102 @@ test("multiple parallel subagents tracked correctly", () => {
 	eq(snap.kind, "working", "back to working");
 });
 
-test("async subagent events keep state in subagents after agent_end", () => {
+test("agent_end records the outcome but stays working until agent_settled", () => {
+	const sm = new StatusStateMachine();
+	sm.onAgentStart();
+	sm.onAgentEnd("completed");
+	let snap = sm.snapshot();
+	eq(snap.kind, "working", "agent_end is not the final settlement boundary");
+	eq(snap.executing, true, "the run remains active between agent_end and agent_settled");
+	sm.onAgentSettled(false);
+	snap = sm.snapshot();
+	eq(snap.kind, "completed", "completion is shown only after agent_settled");
+	eq(snap.executing, false, "the main run is no longer executing after settlement");
+	sm.reset();
+});
+
+test("retryable errors do not decay to idle before agent_settled", () => {
+	const sm = new StatusStateMachine();
+	sm.onAgentStart();
+	sm.onAgentEnd("error", "429 rate limit");
+	const snap = sm.snapshot();
+	eq(snap.kind, "working", "a low-level error remains active while Pi may retry");
+	eq(snap.executing, true, "retry backoff still belongs to the active run");
+	sm.reset();
+});
+
+test("aborted settlement returns to idle instead of reporting an error", () => {
+	const sm = new StatusStateMachine();
+	sm.onAgentStart();
+	sm.onAgentEnd("aborted", "User cancelled");
+	sm.onAgentSettled(true);
+	const snap = sm.snapshot();
+	eq(snap.kind, "idle", "user cancellation is not a failed task");
+	eq(snap.executing, false, "aborted runs settle fully");
+});
+
+test("async subagents stay visible after the main run settles", () => {
 	const sm = new StatusStateMachine();
 	sm.onAgentStart();
 	sm.onAsyncSubagentStart();
 	sm.onAsyncSubagentStart();
-	sm.onAgentEnd();
+	sm.onAgentEnd("completed");
+	sm.onAgentSettled(false);
 	let snap = sm.snapshot();
-	eq(snap.kind, "subagents", "still subagents after agent_end");
+	eq(snap.kind, "subagents", "async work outranks the settled main run");
 	eq(snap.subagents.asyncRunning, 2, "2 async running");
-	eq(snap.executing, true, "executing while async in flight");
+	eq(snap.executing, true, "executing while async work is in flight");
 	sm.onAsyncSubagentComplete();
 	sm.onAsyncSubagentComplete();
-	// After async done, we transition to completed briefly
 	snap = sm.snapshot();
-	// Don't strictly check kind here because the decay timer is async,
-	// but we should not be executing.
-	eq(snap.executing, false, "not executing after async done");
+	eq(snap.kind, "completed", "the stored main-run outcome appears after async work ends");
+	eq(snap.executing, false, "not executing after async work completes");
+	sm.reset();
+});
+
+test("blocking prompts and ordinary tools have distinct states", () => {
+	const sm = new StatusStateMachine();
+	sm.onAgentStart();
+	sm.onToolStart("bash");
+	let snap = sm.snapshot();
+	eq(snap.kind, "tool", "ordinary tools are visible");
+	eq(snap.toolName, "bash", "the active tool name is exposed");
+	sm.onPromptStart("confirm");
+	snap = sm.snapshot();
+	eq(snap.kind, "waiting", "a blocking prompt overrides tool activity");
+	eq(snap.promptKind, "confirm", "the blocking prompt kind is exposed");
+	sm.onPromptEnd();
+	eq(sm.snapshot().kind, "tool", "tool state resumes after the prompt closes");
+	sm.onToolEnd("bash");
+	eq(sm.snapshot().kind, "working", "tool completion returns to working");
+	sm.reset();
+});
+
+test("configured completion and error durations drive decay timers", () => {
+	const realSetTimeout = globalThis.setTimeout;
+	const realClearTimeout = globalThis.clearTimeout;
+	const delays: number[] = [];
+	let nextHandle = 1;
+	globalThis.setTimeout = ((_handler: TimerHandler, timeout?: number) => {
+		delays.push(timeout ?? 0);
+		return nextHandle++ as unknown as ReturnType<typeof setTimeout>;
+	}) as typeof setTimeout;
+	globalThis.clearTimeout = (() => undefined) as typeof clearTimeout;
+	try {
+		const sm = new StatusStateMachine({ completedDurationMs: 1234, errorDurationMs: 5678 });
+		sm.onAgentStart();
+		sm.onAgentEnd("completed");
+		sm.onAgentSettled(false);
+		sm.reset();
+		sm.onAgentStart();
+		sm.onAgentEnd("error", "failed");
+		sm.onAgentSettled(false);
+		eq(delays, [1234, 5678], "both configured durations are passed to setTimeout");
+		sm.reset();
+	} finally {
+		globalThis.setTimeout = realSetTimeout;
+		globalThis.clearTimeout = realClearTimeout;
+	}
 });
 
 test("title format renders correctly for each state", () => {
@@ -132,6 +214,21 @@ test("status bar renders working + turn", () => {
 	eq(out, "⏳ working · turn 3", "status bar with turn");
 });
 
+test("title and status bar render tool and user-wait states", () => {
+	const sm = new StatusStateMachine();
+	const theme: TitleTheme = { ...DEFAULT_THEME, project: "my-app" };
+	sm.onAgentStart();
+	sm.onToolStart("bash");
+	let snap = sm.snapshot();
+	eq(renderTitle(snap, theme, DEFAULT_TITLE_FORMAT), "▸ π my-app · bash", "tool title");
+	eq(renderStatusBar(snap, theme, DEFAULT_TITLE_FORMAT), "▸ tool · bash", "tool status");
+	sm.onPromptStart("confirm");
+	snap = sm.snapshot();
+	eq(renderTitle(snap, theme, DEFAULT_TITLE_FORMAT), "✋ π my-app · waiting for confirm", "wait title");
+	eq(renderStatusBar(snap, theme, DEFAULT_TITLE_FORMAT), "✋ waiting · confirm", "wait status");
+	sm.reset();
+});
+
 test("OSC writer produces expected escape sequence", () => {
 	const writer = createBufferedOscWriter(true);
 	writer.setTitle("hello world");
@@ -170,13 +267,9 @@ test("snapshot synthesizes subagents kind from counters even if stored kind is i
 	const sm = new StatusStateMachine();
 	// Simulate a state where counters are non-zero but stored kind is idle.
 	// This shouldn't happen in normal flow but is a defensive check.
-	(sm as unknown as { state: { kind: string; currentRunTotal: number; currentRunCompleted: number; asyncRunning: number; agentRunning: boolean } }).state = {
-		kind: "idle",
-		currentRunTotal: 2,
-		currentRunCompleted: 0,
-		asyncRunning: 0,
-		agentRunning: false,
-	};
+	(sm as unknown as { state: { kind: string } }).state.kind = "idle";
+	sm.onSubagentStart();
+	sm.onSubagentStart();
 	const snap = sm.snapshot();
 	eq(snap.kind, "subagents", "synthesized kind from counters");
 	eq(snap.executing, true, "executing true while in-flight");
@@ -194,23 +287,26 @@ test("workflow_start keeps state in workflow", () => {
 	eq(snap.subagents.workflowTotal, 1, "workflowTotal should be 1");
 });
 
-test("workflow_end transitions to completed immediately", () => {
+test("standalone workflow completion enters the completed state", () => {
 	const sm = new StatusStateMachine();
 	sm.onWorkflowStart();
 	sm.onWorkflowEnd();
 	const snap = sm.snapshot();
-	eq(snap.kind, "completed", "kind should be completed immediately after end");
+	eq(snap.kind, "completed", "standalone workflow completion is visible");
 	eq(snap.subagents.workflowRunning, 0, "workflowRunning should be 0");
+	sm.reset();
 });
 
 test("workflow fires during completed decay prevents decay-to-idle", () => {
 	const sm = new StatusStateMachine();
 	sm.onAgentStart();
-	sm.onAgentEnd();
-	// now in decay window (completed) with 3-second timer pending
+	sm.onAgentEnd("completed");
+	sm.onAgentSettled(false);
+	// now in decay window (completed) with a timer pending
 	sm.onWorkflowStart(); // fires during decay, clears timer and switches to workflow
 	const snap = sm.snapshot();
 	eq(snap.kind, "workflow", "kind should switch to workflow mid-decay");
+	sm.reset();
 });
 
 test("multiple workflow starts increment counter", () => {
@@ -265,7 +361,8 @@ test("renderStatusBar returns workflow label for workflow state", () => {
 test("{workflows} token is empty when no workflows have been tracked", () => {
 	const sm = new StatusStateMachine();
 	sm.onAgentStart();
-	sm.onAgentEnd();
+	sm.onAgentEnd("completed");
+	sm.onAgentSettled(false);
 	const snap = sm.snapshot();
 	eq(snap.subagents.workflowRunning, 0, "workflowRunning should be 0");
 	eq(snap.subagents.workflowTotal, 0, "workflowTotal should be 0");
@@ -336,9 +433,64 @@ test("async and workflow concurrent: synthesis returns 'subagents' (async/inFlig
 	const sm = new StatusStateMachine();
 	sm.onAsyncSubagentStart();
 	sm.onWorkflowStart();
-	let snap = sm.snapshot();
+	const snap = sm.snapshot();
 	eq(snap.kind, "subagents", "asyncRunning > 0 takes priority over workflowRunning > 0");
 	eq(snap.executing, true, "executing should be true");
+});
+
+test("extension wiring waits for agent_settled and exposes prompt/tool states", async () => {
+	const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-status-tab-test-"));
+	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		const extension = await import("../src/index.ts");
+		const handlers = new Map<string, Array<(event: any, ctx: any) => unknown>>();
+		const titles: string[] = [];
+		const statuses: Array<string | undefined> = [];
+		const pi = {
+			on(name: string, handler: (event: any, ctx: any) => unknown) {
+				const current = handlers.get(name) ?? [];
+				current.push(handler);
+				handlers.set(name, current);
+			},
+			events: { on() {} },
+			getSessionName: () => "test session",
+			registerCommand() {},
+		};
+		const ctx = {
+			mode: "tui",
+			ui: {
+				setTitle: (title: string) => titles.push(title),
+				setStatus: (_key: string, status: string | undefined) => statuses.push(status),
+				notify() {},
+			},
+		};
+		const fire = async (name: string, event: Record<string, unknown> = {}) => {
+			for (const handler of handlers.get(name) ?? []) await handler({ type: name, ...event }, ctx);
+		};
+		extension.default(pi as never);
+		eq(handlers.has("agent_settled"), true, "agent_settled is wired");
+		eq(handlers.has("ui_prompt_start"), true, "ui_prompt_start is wired");
+		eq(handlers.has("ui_prompt_end"), true, "ui_prompt_end is wired");
+		await fire("session_start", { reason: "startup" });
+		await fire("agent_start");
+		await fire("tool_execution_start", { toolName: "bash" });
+		eq(titles.at(-1)?.includes("bash"), true, "ordinary tool title is rendered");
+		await fire("ui_prompt_start", { kind: "confirm" });
+		eq(statuses.at(-1)?.includes("waiting"), true, "blocking prompt status is rendered");
+		await fire("ui_prompt_end", { kind: "confirm" });
+		await fire("tool_execution_end", { toolName: "bash" });
+		await fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+		eq(titles.at(-1)?.startsWith("✓"), false, "agent_end does not claim completion");
+		await fire("agent_settled", { aborted: false });
+		eq(titles.at(-1)?.startsWith("✓"), true, "agent_settled shows completion");
+		await fire("session_shutdown", { reason: "quit" });
+		eq(statuses.at(-1), undefined, "shutdown clears the footer status");
+	} finally {
+		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+		fs.rmSync(agentDir, { recursive: true, force: true });
+	}
 });
 
 // Minimal test runner

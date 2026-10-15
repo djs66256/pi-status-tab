@@ -9,9 +9,10 @@ A [pi](https://github.com/badlogic/pi) extension that surfaces pi's run state to
 
 The reason this needs a dedicated extension (rather than a one-liner with a spinner timer) is **async subagent tracking**. With [pi-subagents](https://github.com/i-am-bee/pi-subagents) running in `async: true` mode, the main agent can hand control back to the user while background work continues. A naive `agent_start` / `agent_end` listener would report "done" during that window. This extension:
 
-- Tracks the main agent through `agent_start` / `turn_start` / `agent_end` / `agent_settled`.
-- Tracks sync subagent calls via `tool_execution_start` / `tool_execution_end` when `toolName === "subagent"`.
-- Tracks async subagents via `pi.events.on("subagent:async-started" | "subagent:async-complete")` and keeps the "subagents" state active until they finish — even after `agent_settled`.
+- Tracks one Pi run from `agent_start` through `agent_settled`. Treat `agent_end` only as its latest low-level outcome because retry, compaction, queued work, and `agent_before_settle` continuation may follow.
+- Tracks ordinary tools and sync subagents through `tool_execution_start` / `tool_execution_end`.
+- Tracks blocking extension UI with `ui_prompt_start` / `ui_prompt_end`.
+- Tracks async subagents via `pi.events.on("subagent:async-started" | "subagent:async-complete")`; background work may remain visible after the main run settles.
 
 ## 2. Architecture
 
@@ -47,7 +48,7 @@ The state machine is the single source of truth. Every event mutates state; ever
 The default export is the pi extension factory. Responsibilities:
 
 - Holds the per-session mutable state (state machine, config, current `ExtensionContext`, OSC writer, spinner timer).
-- Wires every pi event (`session_start` / `session_info_changed` / `session_shutdown` / `agent_start` / `turn_start` / `agent_end` / `tool_execution_start` / `tool_execution_end`) to the right state-machine call.
+- Wires session, agent, settlement, prompt, and tool lifecycle events to the state machine. `agent_settled` is the main-run completion boundary; preserve that invariant when changing event wiring.
 - Wires `pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, ...)` and `…COMPLETE_EVENT, ...)` to async subagent calls.
 - Registers the `/status-tab` command and the `showConfig(ctx)` helper used by it.
 - Re-renders the title and status bar on every state change. Skips `setTitle` when the title is unchanged (keeps TUI idle CPU low). The spinner ticks force a re-render by calling `applyToTerminal()` from `setInterval`.
@@ -85,13 +86,15 @@ States (the displayed kind, which the renderer uses):
 | Kind        | When                                                         |
 | ----------- | ------------------------------------------------------------ |
 | `idle`      | No work in flight. Default state.                            |
-| `working`   | Main agent is in an active run; no subagents in flight.     |
+| `working`   | Main agent is in an active run without a higher-priority state. |
+| `tool`      | An ordinary tool is running; the most recently started one is shown. |
+| `waiting`   | Pi is blocked on a user-facing extension prompt.           |
 | `subagents` | At least one sync or async subagent is still running.       |
 | `workflow`  | At least one workflow invocation (from pi-dynamic-workflows) is running. |
 | `completed` | Run finished OK; held briefly before decaying to `idle`.    |
 | `error`     | Run failed; held briefly before decaying to `idle`.          |
 
-**The two-kind design.** The state machine stores an internal `kind` (drives the decay timer) and `snapshot()` **synthesizes** the displayed kind from the counters (`asyncRunning > 0 || inFlight > 0 ⇒ subagents`, `agentRunning ⇒ working`, else stored kind). This is why a stale stored `kind` cannot leak into the title — see the `snapshot synthesizes subagents kind from counters even if stored kind is idle` test in `test/smoke.test.ts`.
+**Stored outcome vs synthesized display.** The stored `kind` owns settled completion/error decay. `snapshot()` synthesizes the live display with this priority: `waiting > subagents > workflow > tool > working > settled kind`. Preserve this ordering so a blocking prompt or active work cannot be hidden by a stale result.
 
 Mutation methods:
 
@@ -101,13 +104,14 @@ Mutation methods:
 | `onTurnStart(turnIndex)`     | Records the turn index for display. Does not change `kind`.                                   |
 | `onSubagentStart()`          | `currentRunTotal++`.                                                                         |
 | `onSubagentEnd()`            | `currentRunCompleted++` (clamped to `currentRunTotal`).                                      |
-| `onAgentEnd()`               | `agentRunning = false`. If async still running → `subagents` and skip decay. Else → decay to `completed`. |
-| `onAgentError(message?)`     | Same as `onAgentEnd()` but records `errorMessage` and decays to `error`.                      |
-| `onAsyncSubagentStart()`     | `asyncRunning++`, `asyncTotal++`. If currently in `idle`/`completed`/`error`, leave decay and switch to `subagents`. |
-| `onAsyncSubagentComplete()`  | `asyncRunning--` (clamped ≥ 0). If it hits 0 and we were waiting on async, decay to `completed`. |
+| `onAgentEnd(outcome, error?)` | Records the latest low-level result while the Pi run remains active. |
+| `onAgentSettled(aborted)`    | Ends the main run and shows completed/error, or idle for cancellation. Background work still takes rendering priority. |
+| `onToolStart/End(name)`      | Tracks ordinary tools so the current tool name can be rendered. |
+| `onPromptStart/End(kind)`    | Tracks nested blocking prompts; waiting has highest rendering priority. |
+| `onAsyncSubagentStart/Complete()` | Maintains background async counters, including work after main-run settlement. |
 | `reset()`                    | Wipes everything to `INITIAL_STATE`. Called on `session_start` and `session_shutdown`.        |
 
-**Decay timers.** `enterDecay()` schedules a `setTimeout` that transitions `completed` / `error` back to `idle`. The timer is cancelled if a new run starts or another subagent event fires. Default delays are 3 s for `completed`, 5 s for `error`. The decay handler re-checks `agentRunning` and `asyncRunning` before flipping to `idle`, so a subagent that fires during the decay window keeps the state in `subagents`.
+**Decay timers.** `enterDecay()` uses `completedDurationMs` / `errorDurationMs` from `StatusTabConfig`. New activity cancels decay. The callback re-checks the synthesized executing state before returning to idle.
 
 ### `src/title.ts` — formatting
 
@@ -115,7 +119,7 @@ Two public functions: `renderTitle(snapshot, theme, format, workingIconOverride?
 
 **Tokens** the title understands: `{icon}`, `{symbol}`, `{project}`, `{session}`, `{turn}`, `{progress}`. The status bar also understands `{label}` and `{detail}`.
 
-`renderProgress(snapshot)` returns the small ` · subagents 1/3 (+2 async)` qualifier for the title, and `renderStatusDetail(snapshot)` returns the `label` + `detail` pair used by the status bar. Both are pure functions of the snapshot — easy to unit-test.
+`renderProgress(snapshot)` returns the tool, prompt, turn, or subagent qualifier for the title. `renderStatusDetail(snapshot)` returns the `label` + `detail` pair used by the status bar. Both are pure functions of the snapshot.
 
 `iconFor(snapshot, theme, workingIconOverride?)` selects the state icon. The override is the spinner frame when the spinner is animating; the caller in `index.ts` supplies it.
 
@@ -147,7 +151,10 @@ A single `StatusTabConfig` interface, a `DEFAULT_CONFIG` constant, and three I/O
 | `session_shutdown`                       | Stops spinner, restores base title. | `reset()` |
 | `agent_start`                            | Marks run start. | `onAgentStart()` |
 | `turn_start`                             | Records turn index. | `onTurnStart(turnIndex)` |
-| `agent_end`                              | Inspects messages for `stopReason` of `error` / `aborted`. | `onAgentError(msg?)` or `onAgentEnd()` |
+| `agent_end`                              | Records the latest assistant outcome without claiming completion. | `onAgentEnd(outcome, error?)` |
+| `agent_settled`                          | Final boundary after retry/recovery/continuation. | `onAgentSettled(aborted)` |
+| `ui_prompt_start` / `ui_prompt_end`      | Tracks user-blocking extension UI. | `onPromptStart/End(kind)` |
+| `tool_execution_start` (ordinary)        | Displays the active tool name. | `onToolStart(name)` |
 | `tool_execution_start` (subagent)        | Increments in-flight count. | `onSubagentStart()` |
 | `tool_execution_start` (`"workflow"`) | `src/index.ts` | `onWorkflowStart()` |
 | `tool_execution_end` (`"workflow"`)   | `src/index.ts` | `onWorkflowEnd()` |
@@ -206,7 +213,7 @@ Three layers:
 
 | File                          | What it covers                                  | How to run                          |
 | ----------------------------- | ----------------------------------------------- | ----------------------------------- |
-| `test/smoke.test.ts`          | Pure unit tests of the state machine, formatters, OSC writer. | `npx tsx test/smoke.test.ts`        |
+| `test/smoke.test.ts`          | State machine, formatters, and extension-event wiring with a mock Pi API. | `npx tsx test/smoke.test.ts`        |
 | `test/osc.test.ts`            | OSC writer behavior in TTY and non-TTY mode: sequence shape, accumulation, long titles. | `npx tsx test/osc.test.ts`          |
 | `.github/workflows/ci.yml`    | Runs `check` + `test` on every push to `main` and on every PR. Node 22 only (matches `engines.node`). | GitHub Actions UI                  |
 
@@ -221,7 +228,7 @@ There is **no** spawn-`pi` integration test. The earlier one that ran `pi -e ./s
 - Any new state-machine method → a transition test (start state, call, end state, counters).
 - Any new format token → a render test asserting the exact output.
 - Any new OSC behavior → a buffered-writer test asserting the bytes written.
-- Any new event handler → a smoke test that calls the state machine method directly (since wiring is trivial).
+- Any new lifecycle event handler → a state-machine transition test plus an extension-wiring assertion when missing the handler would change user-visible state.
 
 ## 7. Build / typecheck
 
@@ -231,7 +238,9 @@ The package *is* published to npm (so users can `pi install npm:pi-status-tab`),
 
 If you ever want to ship pre-compiled JS (e.g. for a non-pi Node host), add a `build` script that emits to `dist/` and update `package.json#exports` and `pi.extensions`. Don't introduce this without a concrete consumer — the source-of-truth `.ts` files are part of the user-visible contract.
 
-**Node version.** `engines.node` in `package.json` pins the minimum Node to the version that the latest `@earendil-works/pi-coding-agent` requires. Today that's `>=22.19.0`. Bump `engines.node` and `.nvmrc` together whenever you bump the `pi` dep — otherwise `npm ci` in CI will warn (or fail under `--engine-strict`).
+**Host dependency.** Keep `@earendil-works/pi-coding-agent` in `peerDependencies`; Pi supplies it at runtime. Pin the minimum qualified Pi version in `devDependencies` for types and tests. Moving it to `dependencies` installs a duplicate host runtime. Raise the peer minimum only after typecheck plus startup/runtime verification on that exact version.
+
+**Node version.** `engines.node` in `package.json` pins the minimum Node to the version that the qualified Pi development dependency requires. Today that's `>=22.19.0`. Bump `engines.node` and `.nvmrc` together when that minimum moves.
 
 **tsconfig notes:**
 
@@ -261,7 +270,7 @@ To confirm the state machine is in the state you expect, run `pi` interactively 
 **Common pitfalls:**
 
 - *Title doesn't update.* Check `~/.pi/agent/extensions/pi-status-tab.json` — if `enabled: false` or `updateTitle: false`, that's why. Also confirm your terminal actually surfaces the OSC 2 (some emulators need an opt-in).
-- *Spinner never animates.* `animateSpinner: false`, or the state is not `working` / `subagents` (idle / completed / error don't spin).
+- *Spinner never animates.* `animateSpinner: false`, or the state is not `working`, `subagents`, or `workflow`. Tool and waiting states use fixed icons.
 - *Subagent counter looks wrong.* Make sure only one extension is registering the `subagent` tool. If pi-subagents and the bundled example extension are both loaded, the counter will double.
 - *Async subagents don't keep the tab in the working state.* pi-subagents isn't loaded, or `trackAsyncSubagents: false` in the config. Confirm with `pi.events.on("subagent:async-started", () => console.log("hi"))` in a temporary test extension.
 - *Configuration edits don't take effect.* The config is read on `session_start`. Run `/reload` (or restart pi) after editing the JSON.
@@ -274,7 +283,7 @@ Things to know if you're touching the wiring:
 - `ctx.ui.setTitle(title)` routes through pi's terminal interface in TUI mode and is a no-op in RPC / JSON / print modes. That's why `useOsc` exists as a fallback.
 - `ctx.ui.setStatus(key, text)` registers a footer status entry. Multiple extensions share the footer; pick a stable `key` (`pi-status-tab` in this project) so `/status-tab` can address its own entry.
 - `pi.getSessionName()` returns the current session name (set by `/name`); the extension re-renders on `session_info_changed` to pick it up.
-- `agent_start` / `agent_end` / `agent_settled` come from the agent runner, not from any individual turn. `agent_settled` is the right hook if you only want to react to "all retries / compactions / follow-ups done", but the current code does not use it because the subagent counters already cover that ground.
+- `agent_start` / `agent_end` / `agent_settled` come from the agent runner, not from an individual turn. `agent_end` closes one low-level agent run. Only `agent_settled` means retries, recovery, compaction, queued work, and boundary continuations are exhausted.
 - The `subagent:async-started` / `subagent:async-complete` event names are a contract with pi-subagents. They are not part of pi itself. If pi-subagents renames them, this extension must follow.
 
 ## 10. Release process
